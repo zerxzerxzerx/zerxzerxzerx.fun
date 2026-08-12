@@ -1,0 +1,154 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg-primary: #0a0a0a;
+  --bg-secondary: #0e0e0e;
+  --bg-tertiary: #131313;
+
+  --accent: #f5f5f5;
+  --accent-dim: #a1a1a1;
+
+  --border-subtle: rgba(255, 255, 255, 0.06);
+  --border-default: rgba(255, 255, 255, 0.1);
+  --border-strong: rgba(255, 255, 255, 0.16);
+
+  --text-primary: #f5f5f5;
+  --text-secondary: #a1a1a1;
+  --text-muted: #666666;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+  scrollbar-color: #f5f5f5 #0e0e0e;
+  scrollbar-width: thin;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: var(--font-body), Inter, system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow-x: hidden;
+  min-height: 100vh;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+::selection {
+  background: rgba(255, 255, 255, 0.20);
+  color: var(--text-primary);
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: var(--bg-secondary);
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.20);
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+
+.bg-grid {
+  /* Uniform grid, no vignette, and — critically — no brighter square at
+     each intersection.
+
+     The old two-linear-gradient approach layered a vertical 1px line over
+     a horizontal 1px line. At every crossing, CSS source-over compositing
+     paints alpha twice, so the intersection pixel ends up at 1−(1−0.06)²
+     ≈ 0.116 alpha instead of 0.06 — a visible whiter cube at every corner.
+
+     Fix: draw the entire grid as a single tile using an inline SVG. Each
+     56×56 tile is one "L"-shaped fill covering the top row (0–56 x, 0–1 y)
+     and the left column starting one pixel down (0–1 x, 1–56 y). Because
+     the left column skips the corner pixel already occupied by the top
+     row, no pixel is ever painted twice. When these tiles repeat, adjacent
+     tiles complete the grid and every line — including intersections — is
+     uniformly at 0.06 alpha. */
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='56' height='56'%3E%3Cpath d='M0 0h56v1H1v55H0z' fill='white' fill-opacity='.06'/%3E%3C/svg%3E");
+  background-size: 56px 56px;
+}
+
+.bg-vignette {
+  /* Edge-darkening overlay. Sits on top of .bg-grid as a separate fixed
+     layer so the grid itself stays uniformly bright — this darkens the
+     periphery (grid lines included, dimmed alongside the bg) without
+     touching the grid geometry.
+
+     The stops below approximate a quadratic ease-in curve (alpha ∝ r²)
+     rather than the previous two-stop linear ramp. Two-stop linear from
+     "transparent 35%" to "dark 100%" creates a visible ring at 35% —
+     the alpha is exactly 0 up to that point, then starts climbing.
+     Starting the fade from r=0 with an extremely soft initial slope
+     removes that ring; the darkening builds imperceptibly through the
+     middle and pushes hard only in the outer 20% of the radius, which
+     reads as a smooth cinematic falloff instead of a hard edge. */
+  background: radial-gradient(
+    ellipse at 50% 40%,
+    transparent 0%,
+    rgba(0, 0, 0, 0.015) 15%,
+    rgba(0, 0, 0, 0.05) 30%,
+    rgba(0, 0, 0, 0.12) 45%,
+    rgba(0, 0, 0, 0.24) 60%,
+    rgba(0, 0, 0, 0.42) 72%,
+    rgba(0, 0, 0, 0.62) 82%,
+    rgba(0, 0, 0, 0.82) 91%,
+    rgba(0, 0, 0, 1) 100%
+  );
+}
+
+.bg-ambient {
+  background: radial-gradient(
+    ellipse 45% 45% at 50% 12%,
+    rgba(255, 255, 255, 0.05) 0%,
+    transparent 65%
+  );
+}
+
+.bg-noise {
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  opacity: 0.025;
+}
+
+/* Spotify progress bar — runs once over the whole track at native refresh
+   rate. SpotifyRow sets animation-duration = track length and a negative
+   animation-delay = elapsed, so it starts mid-way and interpolates smoothly
+   without any JS ticking or CSS transition catch-up jitter. */
+@keyframes spotify-progress {
+  from { width: 0%; }
+  to   { width: 100%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
