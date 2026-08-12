@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import dynamic from 'next/dynamic'
-import { AnimatePresence, m, useReducedMotion } from 'framer-motion'
+import { AnimatePresence, m } from 'framer-motion'
 import { User, Layers } from 'lucide-react'
 import { SiRoblox } from '@icons-pack/react-simple-icons'
 import { Icon, type IconKey } from '@/lib/icons'
@@ -29,42 +29,9 @@ type ModalKey =
   | 'roblox'
   | null
 
-const EASE = [0.25, 0.46, 0.45, 0.94] as const
-
-const container = {
-  hidden: { opacity: 0 },
-  show: {
-    opacity: 1,
-    transition: { staggerChildren: 0.07, delayChildren: 0.1 },
-  },
-}
-
-const item = {
-  hidden: { opacity: 0, y: 14 },
-  show: {
-    opacity: 1,
-    y: 0,
-    transition: { duration: 0.55, ease: EASE },
-  },
-}
-
-// Reduced-motion variants — same shape but no translate + no stagger. Users
-// still get a subtle fade-in so the page doesn't feel bare on load.
-const containerReduced = {
-  hidden: { opacity: 0 },
-  show: { opacity: 1, transition: { duration: 0.2 } },
-}
-const itemReduced = {
-  hidden: { opacity: 0 },
-  show: { opacity: 1, transition: { duration: 0.2 } },
-}
-
 export default function BioLink() {
   const [modal, setModal] = useState<ModalKey>(null)
   const [pengiTip, setPengiTip] = useState(false)
-  const shouldReduce = useReducedMotion()
-  const containerVariants = shouldReduce ? containerReduced : container
-  const itemVariants = shouldReduce ? itemReduced : item
 
   // Once the page is idle, warm the modal chunks + their /api responses in
   // the background. That way the first click on any tile skips both the
@@ -107,16 +74,14 @@ export default function BioLink() {
 
   return (
     <>
-      <m.div
-        variants={containerVariants}
-        initial="hidden"
-        animate="show"
-        className="mx-auto flex w-full max-w-sm flex-col items-center gap-7 px-6"
-      >
-        <m.div
-          variants={itemVariants}
-          className="mb-3 flex flex-col items-center gap-2 text-center"
-        >
+      {/* Entrance stagger comes from the `bio-enter` CSS class in globals.css,
+          not framer variants. See the comment there for why — short version:
+          framer's initial="hidden" sends `opacity:0` inline in SSR, and on
+          mobile the JS hydration window is long enough for that to render as
+          a "blank then pop" flash. CSS keyframes paint from the head sheet
+          instantly and share timing across every device. */}
+      <div className="mx-auto flex w-full max-w-sm flex-col items-center gap-7 px-6 bio-enter">
+        <div className="mb-3 flex flex-col items-center gap-2 text-center">
           <h1
             className="bg-gradient-to-b from-white to-white/60 bg-clip-text font-display text-3xl font-extrabold tracking-tight text-transparent transition-[text-shadow] duration-300 ease-out hover:[text-shadow:0_0_4px_rgba(255,255,255,0.95),0_0_10px_rgba(255,255,255,0.7),0_0_22px_rgba(255,255,255,0.45),0_0_40px_rgba(255,255,255,0.22)]"
             style={{ WebkitTextStroke: '0.2px rgba(255,255,255,0.15)' }}
@@ -126,9 +91,9 @@ export default function BioLink() {
           <p className="max-w-xs text-sm leading-relaxed text-fg-muted">
             {ZERX.headline}
           </p>
-        </m.div>
+        </div>
 
-        <m.div variants={itemVariants} className="w-full">
+        <div className="w-full">
           <a
             href={ZERX.socials.telegram}
             target="_blank"
@@ -138,15 +103,15 @@ export default function BioLink() {
           >
             <Icon name="telegram" width={18} height={18} className="text-fg" />
           </a>
-        </m.div>
+        </div>
 
-        <m.div variants={itemVariants} className="grid w-full grid-cols-3 gap-3">
+        <div className="grid w-full grid-cols-3 gap-3">
           <SocialTile iconKey="tiktok" label="TikTok" onClick={() => setModal('tiktok')} />
           <SocialTile iconKey="github" label="GitHub" onClick={() => setModal('github')} />
           <SocialTile iconKey="discord" label="Discord" onClick={() => setModal('discord')} />
-        </m.div>
+        </div>
 
-        <m.div variants={itemVariants} className="grid w-full grid-cols-2 gap-3">
+        <div className="grid w-full grid-cols-2 gap-3">
           <InfoTile
             icon={<User size={16} />}
             label="About"
@@ -157,13 +122,13 @@ export default function BioLink() {
             label="Services"
             onClick={() => setModal('services')}
           />
-        </m.div>
+        </div>
 
         {/* Roblox tile — sits right above the pengi button, matches its
             full-width rounded-2xl silhouette so the two vanity tiles visually
             pair as a set. Rendered before pengi so the pengi button stays
             the last item in the tab order (nice thumb-reach on mobile). */}
-        <m.div variants={itemVariants} className="w-full">
+        <div className="w-full">
           <button
             type="button"
             onClick={() => setModal('roblox')}
@@ -178,9 +143,9 @@ export default function BioLink() {
               className="text-fg"
             />
           </button>
-        </m.div>
+        </div>
 
-        <m.div variants={itemVariants} className="relative w-full">
+        <div className="relative w-full">
           <button
             type="button"
             onClick={() => setModal('pengi')}
@@ -227,8 +192,8 @@ export default function BioLink() {
               </m.div>
             )}
           </AnimatePresence>
-        </m.div>
-      </m.div>
+        </div>
+      </div>
 
       <AnimatePresence>
         {modal === 'about' && (
