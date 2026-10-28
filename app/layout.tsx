@@ -14,17 +14,26 @@ export const metadata: Metadata = {
   authors: [{ name: 'zerx' }],
   creator: 'zerx',
   openGraph: {
+    // No siteName/description here on purpose — chat-app link unfurls
+    // (Discord/Telegram/X) render og:site_name above the bold og:title and
+    // og:description below it, which with all three set to variants of
+    // "zerx" rendered as a redundant "zerx / zerx / zerx — socials..."
+    // stack. Leaving just the title keeps the embed to a single "zerx".
+    // Description is a single space, not an empty string or omitted key —
+    // Next.js treats both of those as "unset" and auto-inherits the root
+    // `metadata.description` into og:description/twitter:description
+    // (see postProcessMetadata's `!target.description` check), which is
+    // exactly the redundant text this is trying to avoid.
     title: 'zerx',
-    description: 'zerx — socials and live Discord status.',
+    description: ' ',
     url: SITE_URL,
-    siteName: 'zerx',
     type: 'website',
     locale: 'en_US',
   },
   twitter: {
     card: 'summary_large_image',
     title: 'zerx',
-    description: 'zerx — socials and live Discord status.',
+    description: ' ',
     creator: '@zerx',
   },
   robots: {
