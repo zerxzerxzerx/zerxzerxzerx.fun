@@ -16,27 +16,22 @@ const securityHeaders = [
     key: 'Content-Security-Policy',
     value: [
       "default-src 'self'",
-      "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+      // 'unsafe-eval' is only needed for Next's dev-mode HMR/webpack runtime —
+      // dropping it in production tightens the policy against injected eval.
+      process.env.NODE_ENV === 'production'
+        ? "script-src 'self' 'unsafe-inline'"
+        : "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
       "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
       "font-src 'self' https://fonts.gstatic.com data:",
-      // TikTok serves avatars from a bunch of regional subdomains
-      // (p16-common-sign, p16-sign-va, p19-sign-*, etc.) under both
-      // tiktokcdn.com and tiktokcdn-us.com, so we wildcard both.
-      // media.discordapp.net serves proxied activity/game images; i.scdn.co is
-      // Spotify's album-art CDN (used by Lanyard presence).
-      // Roblox thumbnails/badges/group icons are served from tN.rbxcdn.com
-      // (N = 0..7); the *.rbxcdn.com wildcard covers all of them plus the
-      // 3D avatar manifest + OBJ/MTL/texture assets loaded by the WebGL
-      // viewer.
-      "img-src 'self' data: blob: https://cdn.discordapp.com https://media.discordapp.net https://i.scdn.co https://avatars.githubusercontent.com https://*.tiktokcdn.com https://*.tiktokcdn-us.com https://*.rbxcdn.com",
+      // cdn.discordapp.com = profile avatar / badge art; i.scdn.co = Spotify
+      // album art; *.rbxcdn.com = Roblox headshot/badge/group thumbnails;
+      // tiktokcdn(-us/-eu) = TikTok avatar images in the TikTok modal.
+      "img-src 'self' data: blob: https://cdn.discordapp.com https://i.scdn.co https://*.rbxcdn.com https://*.tiktokcdn.com https://*.tiktokcdn-us.com https://*.tiktokcdn-eu.com",
       "media-src 'self' https://cdn.discordapp.com",
-      // api.lanyard.rest = client-side Discord presence polling. The Roblox
-      // modal used to hit *.rbxcdn.com directly for 3D OBJ/MTL/texture
-      // fetches, but the endpoint feeding that pipeline (avatar-3d) became
-      // auth-gated in late 2024, so all Roblox data now round-trips
-      // through /api/roblox on our own origin — no third-party connect
-      // permission needed.
-      "connect-src 'self' https://api.lanyard.rest",
+      // api.lanyard.rest = client-side Discord presence polling.
+      // dcdn.dstn.to = avatar decoration / nameplate / badge data that
+      // Lanyard doesn't expose (mirrors Discord's private profile endpoint).
+      "connect-src 'self' https://api.lanyard.rest https://dcdn.dstn.to",
       "frame-ancestors 'none'",
       "base-uri 'self'",
     ].join('; '),
@@ -44,7 +39,14 @@ const securityHeaders = [
 ]
 
 const nextConfig = {
-  reactStrictMode: true,
+  // Framer Motion's mount-animation effect doesn't survive React 18 Strict
+  // Mode's dev-only double-invoke (mount → cleanup → mount): the panel's
+  // opacity animation gets cancelled mid-flight and never restarts, leaving
+  // modals permanently stuck at opacity:0. This has zero effect on the
+  // production build (React only double-invokes effects in development,
+  // regardless of this flag), so disabling it only trades away a dev-only
+  // safety net to fix a dev-only rendering bug.
+  reactStrictMode: false,
   poweredByHeader: false,
   compiler: {
     removeConsole: process.env.NODE_ENV === 'production' ? { exclude: ['error'] } : false,
@@ -58,24 +60,7 @@ const nextConfig = {
     optimizePackageImports: ['lucide-react', 'framer-motion'],
   },
   async headers() {
-    // Long-cache the stable static assets in /public. Vercel's default for
-    // /public serves them with `Cache-Control: public, max-age=0,
-    // must-revalidate` — that forces a revalidation round-trip on every
-    // navigation, even for identical bytes. Overriding to a week of freshness
-    // + a week of stale-while-revalidate cuts every repeat visit's asset
-    // cost to zero without going full `immutable` (so if I ever swap the
-    // file, browsers eventually pick up the new copy).
-    const longCache = [
-      {
-        key: 'Cache-Control',
-        value: 'public, max-age=604800, stale-while-revalidate=604800',
-      },
-    ]
-    return [
-      { source: '/(.*)', headers: securityHeaders },
-      { source: '/pengi.webp', headers: longCache },
-      { source: '/coins/:path*', headers: longCache },
-    ]
+    return [{ source: '/(.*)', headers: securityHeaders }]
   },
 }
 

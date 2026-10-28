@@ -10,7 +10,7 @@ const config: Config = {
     extend: {
       colors: {
         bg: {
-          DEFAULT: '#0a0a0a',
+          DEFAULT: '#000000',
           card: '#0e0e0e',
           raised: '#131313',
           subtle: '#1a1a1a',

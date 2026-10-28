@@ -1,7 +1,6 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
-import { m } from 'framer-motion'
 import { BadgeCheck, Check, Copy, Loader2, Lock } from 'lucide-react'
 import { useCachedPoll } from '@/lib/useCachedPoll'
 
@@ -148,15 +147,11 @@ export default function TikTokProfile({ username }: { username: string }) {
   return (
     <div className="space-y-3">
       {!expanded ? (
-        <m.button
-          key="collapsed"
+        <button
           type="button"
           onClick={() => setExpanded(true)}
           aria-expanded={false}
           aria-label="Show full profile"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ duration: 0.2 }}
           className="relative block h-24 w-full overflow-hidden rounded-xl bg-bg-raised text-left"
         >
           <div className="relative flex h-full items-center gap-3 px-4">
@@ -178,15 +173,9 @@ export default function TikTokProfile({ username }: { username: string }) {
               <div className="truncate text-xs text-fg-muted">@{user.unique_id}</div>
             </div>
           </div>
-        </m.button>
+        </button>
       ) : (
-        <m.div
-          key="expanded"
-          initial={{ opacity: 0, y: -4 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.25 }}
-          className="space-y-3"
-        >
+        <div className="profile-card-enter space-y-3">
           {/* Header — flat card, no banner (TikTok profiles don't have one). */}
           <div className="rounded-xl bg-bg-raised p-4">
             <div className="flex items-center gap-3">
@@ -283,7 +272,7 @@ export default function TikTokProfile({ username }: { username: string }) {
           {joinedYear && (
             <div className="text-center text-xs text-fg-muted">On TikTok since {joinedYear}</div>
           )}
-        </m.div>
+        </div>
       )}
     </div>
   )

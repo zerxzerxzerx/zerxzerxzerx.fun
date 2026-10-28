@@ -21,7 +21,6 @@ export default function ErrorPage({
 
   return (
     <>
-      <div aria-hidden className="pointer-events-none fixed inset-0 bg-grid" />
       <main className="relative flex min-h-screen items-center justify-center px-6 py-20">
         <div className="w-full max-w-sm space-y-5 rounded-2xl border border-line bg-bg-card p-6 text-center">
           <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-full bg-amber-500/10 text-amber-400 ring-1 ring-amber-500/20">

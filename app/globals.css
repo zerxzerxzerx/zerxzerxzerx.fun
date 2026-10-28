@@ -3,7 +3,7 @@
 @tailwind utilities;
 
 :root {
-  --bg-primary: #0a0a0a;
+  --bg-primary: #000000;
   --bg-secondary: #0e0e0e;
   --bg-tertiary: #131313;
 
@@ -25,8 +25,41 @@
 
 html {
   scroll-behavior: smooth;
-  scrollbar-color: #f5f5f5 #0e0e0e;
-  scrollbar-width: thin;
+  /* Removes the grey overlay iOS Safari paints on top of any tapped element.
+     Without this, every biolink tile shows a translucent grey rectangle for
+     ~200ms after tap — which reads as the tile "flashing" or "reappearing"
+     while the modal opens. Set on <html> so it cascades to every element
+     without hunting each interactive class. */
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Scrollbars are hidden everywhere, site-wide. Every scrollable element
+   (the page itself, the wallet modal's activity feed, any future
+   overflow-y-auto container) still scrolls normally via wheel, touch,
+   drag, or keyboard — this only ever suppresses the visible track/thumb,
+   never the underlying scroll behavior. `scrollbar-width` covers Firefox,
+   `-ms-overflow-style` covers legacy Edge/IE, and the `::-webkit-scrollbar`
+   rule covers Chrome/Safari/current Edge. Applied on the universal
+   selector (not just html/body) so it reaches every nested scroll
+   container automatically, without needing a per-element utility class
+   like the old `.scrollbar-none` below (kept as a harmless no-op alias). */
+* {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+*::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+/* touch-action:manipulation removes the 300ms tap delay iOS/Android used to
+   ship for double-tap-to-zoom detection. Modern browsers still hesitate on
+   unknown gesture regions; declaring `manipulation` tells them "no gesture,
+   fire the tap now". Applied to all interactive elements so every tile feels
+   instant on mobile. */
+a, button {
+  touch-action: manipulation;
 }
 
 body {
@@ -51,86 +84,20 @@ a {
   color: var(--text-primary);
 }
 
-::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+/* Hides the scrollbar on horizontal carousels (badge shelves) while keeping
+   them scrollable — the mask-image edge fade is the "more to scroll" signal
+   instead. Not a default Tailwind utility (no scrollbar plugin installed). */
+.scrollbar-none {
+  scrollbar-width: none;
 }
-::-webkit-scrollbar-track {
-  background: var(--bg-secondary);
-}
-::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.08);
-  border-radius: 4px;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.20);
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
 }
 
 :focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 3px;
   border-radius: 4px;
-}
-
-.bg-grid {
-  /* Uniform grid, no vignette, and — critically — no brighter square at
-     each intersection.
-
-     The old two-linear-gradient approach layered a vertical 1px line over
-     a horizontal 1px line. At every crossing, CSS source-over compositing
-     paints alpha twice, so the intersection pixel ends up at 1−(1−0.06)²
-     ≈ 0.116 alpha instead of 0.06 — a visible whiter cube at every corner.
-
-     Fix: draw the entire grid as a single tile using an inline SVG. Each
-     56×56 tile is one "L"-shaped fill covering the top row (0–56 x, 0–1 y)
-     and the left column starting one pixel down (0–1 x, 1–56 y). Because
-     the left column skips the corner pixel already occupied by the top
-     row, no pixel is ever painted twice. When these tiles repeat, adjacent
-     tiles complete the grid and every line — including intersections — is
-     uniformly at 0.06 alpha. */
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='56' height='56'%3E%3Cpath d='M0 0h56v1H1v55H0z' fill='white' fill-opacity='.06'/%3E%3C/svg%3E");
-  background-size: 56px 56px;
-}
-
-.bg-vignette {
-  /* Edge-darkening overlay. Sits on top of .bg-grid as a separate fixed
-     layer so the grid itself stays uniformly bright — this darkens the
-     periphery (grid lines included, dimmed alongside the bg) without
-     touching the grid geometry.
-
-     The stops below approximate a quadratic ease-in curve (alpha ∝ r²)
-     rather than the previous two-stop linear ramp. Two-stop linear from
-     "transparent 35%" to "dark 100%" creates a visible ring at 35% —
-     the alpha is exactly 0 up to that point, then starts climbing.
-     Starting the fade from r=0 with an extremely soft initial slope
-     removes that ring; the darkening builds imperceptibly through the
-     middle and pushes hard only in the outer 20% of the radius, which
-     reads as a smooth cinematic falloff instead of a hard edge. */
-  background: radial-gradient(
-    ellipse at 50% 40%,
-    transparent 0%,
-    rgba(0, 0, 0, 0.015) 15%,
-    rgba(0, 0, 0, 0.05) 30%,
-    rgba(0, 0, 0, 0.12) 45%,
-    rgba(0, 0, 0, 0.24) 60%,
-    rgba(0, 0, 0, 0.42) 72%,
-    rgba(0, 0, 0, 0.62) 82%,
-    rgba(0, 0, 0, 0.82) 91%,
-    rgba(0, 0, 0, 1) 100%
-  );
-}
-
-.bg-ambient {
-  background: radial-gradient(
-    ellipse 45% 45% at 50% 12%,
-    rgba(255, 255, 255, 0.05) 0%,
-    transparent 65%
-  );
-}
-
-.bg-noise {
-  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
-  opacity: 0.025;
 }
 
 /* Spotify progress bar — runs once over the whole track at native refresh
@@ -187,5 +154,219 @@ a {
     animation-iteration-count: 1 !important;
     transition-duration: 0.001ms !important;
     scroll-behavior: auto !important;
+  }
+
+  /* Preserve a subtle opacity-only fade for the bio entrance. The universal
+     rule above collapses every animation to 0.001ms, which for `.bio-enter`
+     means the whole page pops in with no intro at all — that read as
+     "you removed the fade" for users with reduced-motion on (very common on
+     iOS). A pure fade with no translate is safe for motion-sensitive users
+     (motion sickness is caused by *motion*, not opacity changes), so we
+     restore a 220ms opacity fade specifically for bio-enter children while
+     leaving the rest of the reduced-motion collapse intact. */
+  .bio-enter > * {
+    animation-name: bio-enter-fade !important;
+    animation-duration: 0.22s !important;
+    animation-timing-function: ease-out !important;
+  }
+
+  /* Same reasoning as .bio-enter above: this is a pure text-shadow (color/
+     opacity) fade on hover, not motion, so it's safe to exempt from the
+     universal 0.001ms collapse. Without this, the reduced-motion setting
+     (common on Windows via Ease of Access > Show animations) makes the name
+     glow snap on/off instantly instead of fading. */
+  .name-glow {
+    transition-duration: 300ms !important;
+  }
+}
+
+@keyframes bio-enter-fade {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+/* Modal panel enter/exit — CSS-driven, not framer-motion-controlled.
+
+   This used to run on framer-motion (AnimatePresence + m.div initial/
+   animate/exit). That stack depends on framer's mount/unmount effects
+   firing in the right order, which is fragile: React 18 Strict Mode's
+   dev-only double-invoke could leave the panel's animated opacity frozen
+   at 0 (confirmed — the entrance effect ran, got torn down by Strict
+   Mode's cleanup pass, and never restarted), and any `exit` prop without
+   an AnimatePresence ancestor is silently dropped, so content can vanish
+   instantly instead of animating out. Both are real bugs that shipped as
+   "the modal flickers / glitches opening and closing".
+
+   A plain CSS animation can't get out of sync with React's render cycle
+   like that — it starts the instant the class is applied and runs on the
+   compositor regardless of what JS does afterward. Exit timing is driven
+   by listening for `animationend` on the panel itself (see Modal.tsx)
+   rather than a hardcoded setTimeout, so it can never drift from how long
+   the animation actually plays — including under the reduced-motion
+   collapse below, which shortens both to near-zero for free. */
+@keyframes modal-panel-in {
+  from { opacity: 0; transform: scale(0.97); }
+  to   { opacity: 1; transform: scale(1); }
+}
+/* Separate keyframe for the exit (not just `direction: reverse` on the same
+   name) — when enter and exit share one animation-name, switching classes
+   after the enter animation has already finished (held via `fill: both`)
+   doesn't reliably restart playback in every browser, since only the
+   direction/duration sub-properties changed, not the name. With no restart,
+   no new `animationend` ever fires, so `onClose` (Modal.tsx) never runs and
+   the backdrop is left mounted forever — invisible but still covering the
+   screen and swallowing every click. A distinct name guarantees the browser
+   treats it as a brand-new animation and always re-fires `animationend`. */
+@keyframes modal-panel-out {
+  from { opacity: 1; transform: scale(1); }
+  to   { opacity: 0; transform: scale(0.97); }
+}
+.modal-panel-enter {
+  animation: modal-panel-in 0.2s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.modal-panel-exit {
+  animation: modal-panel-out 0.16s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* Profile card enter — same CSS-over-framer reasoning as modal-panel-in
+   above, for the collapsed→expanded profile card swap (Discord, TikTok) and
+   for conditionally-rendered sub-cards (Roblox's "currently playing"). The
+   collapsed/prior view is simply removed from the DOM when the condition
+   flips (no exit animation needed: these only ever run one direction per
+   modal session), and the new view fades/slides in on its own entrance. */
+@keyframes profile-card-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.profile-card-enter {
+  animation: profile-card-in 0.22s ease-out both;
+}
+
+/* Badge/group row stagger — same entrance timing as .bio-enter, for lists
+   whose item count varies (Roblox badges/groups). Delay is set inline per
+   item via `animationDelay` since the stagger count isn't fixed like the
+   6-item bio list above. */
+@keyframes badge-row-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.badge-row-enter {
+  animation: badge-row-in 0.25s ease-out both;
+}
+
+/* Corner toast enter/exit (BioLink.tsx's ExternalRedirectToast) — same
+   separate-keyframe-per-direction + animationend-driven unmount reasoning
+   as modal-panel-in/out above. Slides in from the edge it's anchored to
+   instead of just fading, so it reads as "a thing arrived" rather than a
+   popup materializing mid-screen. */
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(-6px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes toast-out {
+  from { opacity: 1; transform: translateY(0) scale(1); }
+  to   { opacity: 0; transform: translateY(-6px) scale(0.97); }
+}
+.toast-enter {
+  animation: toast-in 0.22s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.toast-exit {
+  animation: toast-out 0.16s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* External-link redirect countdown bar (BioLink.tsx's ExternalRedirectToast)
+   — a plain shrinking bar in lockstep with the numeric countdown, same
+   "CSS keyframe, not JS-ticked" approach as spotify-progress above. Unlike
+   spotify-progress this is purely a decorative echo of the (already
+   accurate) numeric countdown next to it, so unlike that one there's no
+   need to exempt it from the prefers-reduced-motion collapse further up
+   this file — collapsing it to instant is fine since the real countdown
+   logic lives in a setTimeout chain, not in this animation. */
+@keyframes external-redirect-progress {
+  from { width: 100%; }
+  to   { width: 0%; }
+}
+
+/* Suppress sticky :hover on touch devices. Mobile Safari (and Android Chrome
+   to a lesser extent) latches :hover on tap and only clears it when the user
+   taps elsewhere — so every tile the user has ever tapped shows in its
+   "hovered" (bg-bg-subtle) state for the rest of the session. That reads as
+   the tiles randomly changing color / "appearing and disappearing" when
+   users interact.
+
+   Rather than rewrite every `hover:*` utility across the tree, we scope the
+   hover backgrounds to `@media (hover: hover)` — devices with a true
+   hovering pointer (mouse/trackpad). Touch primary devices get no hover
+   state, which is the correct behavior. */
+@media (hover: none) {
+  .bio-enter a:hover,
+  .bio-enter button:hover {
+    background-color: var(--bg-tertiary);
+  }
+}
+
+/* Universal custom tooltip — one hover-bubble implementation shared by every
+   hint in the app (stats row labels, badge names/descriptions, limited item
+   names). Replaces native `title="..."` attributes everywhere, since native
+   tooltips are slow to appear, styled inconsistently per-browser, and
+   invisible on touch. Any element that should show a hint gets
+   `.tooltip-anchor` (plus `position: relative`, provided here) wrapping a
+   `.tooltip-bubble` child with the hint text. Hover is scoped to
+   `hover: hover` for the same reason as the touch-hover suppression above —
+   on touch devices (no true hover) the tooltip simply never shows, which is
+   intentional: an earlier tap-to-open version left tooltips stuck visible,
+   which read worse than no touch affordance at all. */
+.tooltip-anchor {
+  position: relative;
+  /* `isolate` forces this element to form its own stacking context right
+     here, instead of implicitly inheriting one from whatever else happens
+     to be applied to it (see z-index note below) — gives the :hover rule
+     below a context it's guaranteed to control. */
+  isolation: isolate;
+}
+.tooltip-bubble {
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translate(-50%, 2px);
+  margin-bottom: 5px;
+  padding: 3px 7px;
+  border-radius: 6px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-default);
+  color: var(--text-primary);
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease, transform 0.15s ease;
+  z-index: 10;
+}
+@media (hover: hover) {
+  /* Several tooltip anchors (badge/limited grid tiles) sit inside entrance
+     animations that use `animation-fill-mode: both` — once the animation
+     ends, the final keyframe's `transform` value is held forever, and any
+     non-`none` transform (even translateY(0)) creates its own stacking
+     context. That meant a later grid sibling — itself isolated the same
+     way — always painted over an earlier sibling's tooltip bubble whenever
+     the bubble overflowed sideways into the neighboring cell, no matter
+     what z-index the bubble had: a positioned element's z-index only ranks
+     it against siblings *within the same stacking context*, and the bubble
+     was trapped inside its own anchor's context. Bumping the *anchor's*
+     z-index on hover (not just the bubble's) raises the anchor's whole
+     context — bubble included — above every z-index:auto sibling,
+     regardless of DOM order or any transform they're holding. */
+  .tooltip-anchor:hover {
+    z-index: 50;
+  }
+  .tooltip-anchor:hover .tooltip-bubble {
+    opacity: 1;
+    transform: translate(-50%, 0);
   }
 }

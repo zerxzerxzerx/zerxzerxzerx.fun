@@ -1,8 +1,11 @@
 'use client'
 
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { m, useReducedMotion } from 'framer-motion'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
+import { useReducedMotion } from 'framer-motion'
 import { Check, Copy, Gamepad2, Loader2, MoreHorizontal } from 'lucide-react'
+import { useCachedPoll } from '@/lib/useCachedPoll'
+import { subscribeLanyard } from '@/lib/lanyard'
 
 type DiscordUser = {
   id: string
@@ -38,6 +41,19 @@ type ApiResponse = {
   message?: string
 }
 
+// Matches the route's own revalidate=300 (app/api/discord/route.ts) — same
+// convention as RobloxProfile/TikTokProfile's POLL_MS.
+const POLL_MS = 5 * 60 * 1000
+
+// Avatar decoration (the animated-frame PNG Discord renders around the pfp)
+// scale + offset. Decoration art ships on a fixed square canvas with varying
+// internal padding per-asset, so there's no formula that fits every
+// decoration — these were dialed in by eye via the `?debugdecoration=1`
+// positioner below and should be re-tuned the same way if they ever look off
+// for a different decoration asset.
+const DECORATION_SCALE = 1.18
+const DECORATION_NUDGE = { x: 0, y: 0 }
+
 // Palette used for the initial-letter fallback so different users get
 // different colors instead of all defaulting to the same grey blob.
 const FALLBACK_PALETTE = ['#5865F2', '#EB459E', '#57F287', '#FEE75C', '#ED4245']
@@ -56,6 +72,8 @@ function Avatar({
   initial,
   initialBg,
   decorationUrl,
+  decorationScale = DECORATION_SCALE,
+  decorationNudge = DECORATION_NUDGE,
   noBorder = false,
   priority = false,
 }: {
@@ -66,6 +84,10 @@ function Avatar({
   initial: string
   initialBg: string
   decorationUrl?: string | null
+  // Live overrides from the `?debugdecoration=1` positioner — defaults to
+  // the dialed-in constants above when not debugging.
+  decorationScale?: number
+  decorationNudge?: { x: number; y: number }
   // When true, drops the inner 2px black/40 outline entirely. Used in the
   // expanded profile where the outer wrapper's border-4 already provides
   // the visible ring, and an inner border only introduces subpixel gaps
@@ -115,11 +137,19 @@ function Avatar({
           alt=""
           referrerPolicy="no-referrer"
           aria-hidden="true"
-          className="pointer-events-none absolute"
+          draggable={false}
+          className="pointer-events-none absolute select-none"
           style={{
-            inset: -Math.round(size * 0.09),
-            width: size + Math.round(size * 0.18),
-            height: size + Math.round(size * 0.18),
+            width: size * decorationScale,
+            height: size * decorationScale,
+            left: -((size * decorationScale - size) / 2) + decorationNudge.x,
+            top: -((size * decorationScale - size) / 2) + decorationNudge.y,
+            // Tailwind preflight's `img { max-width: 100% }` would otherwise
+            // cap this at the 56/64px avatar box width (its nearest
+            // positioned ancestor) while height scales freely — see the same
+            // override on the main-page decoration in BioLink.tsx.
+            maxWidth: 'none',
+            objectFit: 'contain',
           }}
         />
       )}
@@ -177,6 +207,15 @@ type LanyardState =
   | { status: 'not-monitored'; data: null; message: string }
   | { status: 'error'; data: null; message: string }
 
+// Subscribes to the shared Lanyard poller (lib/lanyard.ts) rather than
+// running its own fetch/interval — BioLink.tsx subscribes to the same
+// userId for the whole time the page is open, so by the time this modal's
+// profile card expands and calls this hook, the shared poll is typically
+// already warm: `subscribeLanyard` replays the last known envelope
+// synchronously, which is what lets `status: 'ok'` data show up on the very
+// first render instead of a guaranteed loading flash. Only when this is the
+// very first subscriber for that userId (Lanyard polling genuinely hasn't
+// started yet) does a real request get fired.
 function useLanyard(userId: string): LanyardState {
   const [state, setState] = useState<LanyardState>({
     status: 'idle',
@@ -188,68 +227,24 @@ function useLanyard(userId: string): LanyardState {
       setState({ status: 'idle', data: null, message: null })
       return
     }
-    let alive = true
-    // Only show the loading spinner on the first load, not on the 15s
-    // background polls — otherwise the presence card would flicker every tick.
+    // Only show the loading spinner on the first load, not on background
+    // polls — otherwise the presence card would flicker every tick.
     setState((prev) =>
       prev.status === 'ok' ? prev : { status: 'loading', data: null, message: null },
     )
-    const load = async () => {
-      try {
-        const r = await fetch(`https://api.lanyard.rest/v1/users/${userId}`, {
-          cache: 'no-store',
+    return subscribeLanyard(userId, (envelope) => {
+      if (envelope.ok && envelope.data) {
+        setState({ status: 'ok', data: envelope.data as unknown as LanyardData, message: null })
+      } else if (envelope.status === 404 || envelope.errorCode === 'user_not_monitored') {
+        setState({
+          status: 'not-monitored',
+          data: null,
+          message: envelope.errorMessage || 'User not in Lanyard guild',
         })
-        const j = (await r.json().catch(() => null)) as {
-          success?: boolean
-          data?: LanyardData
-          error?: { message?: string; code?: string }
-        } | null
-        if (!alive) return
-        if (r.ok && j?.success && j.data) {
-          setState({ status: 'ok', data: j.data, message: null })
-        } else if (r.status === 404 || j?.error?.code === 'user_not_monitored') {
-          setState({
-            status: 'not-monitored',
-            data: null,
-            message: j?.error?.message || 'User not in Lanyard guild',
-          })
-        } else {
-          const message = j?.error?.message || `Lanyard returned ${r.status}`
-          console.warn('[lanyard] non-ok response:', message, j)
-          setState({ status: 'error', data: null, message })
-        }
-      } catch (e) {
-        if (!alive) return
-        const message = e instanceof Error ? e.message : 'Network error'
-        console.warn('[lanyard] fetch failed:', message)
-        setState({ status: 'error', data: null, message })
+      } else {
+        setState({ status: 'error', data: null, message: envelope.errorMessage || 'Lanyard error' })
       }
-    }
-    let intervalId: ReturnType<typeof setInterval> | null = null
-    const start = () => {
-      if (intervalId != null) return
-      void load()
-      intervalId = setInterval(load, 15_000)
-    }
-    const stop = () => {
-      if (intervalId != null) {
-        clearInterval(intervalId)
-        intervalId = null
-      }
-    }
-    // Pause polling when the tab is hidden — a user with the modal open in
-    // a background tab shouldn't drive traffic every 15s indefinitely.
-    const onVis = () => {
-      if (document.hidden) stop()
-      else start()
-    }
-    start()
-    document.addEventListener('visibilitychange', onVis)
-    return () => {
-      alive = false
-      stop()
-      document.removeEventListener('visibilitychange', onVis)
-    }
+    })
   }, [userId])
   return state
 }
@@ -346,17 +341,22 @@ function StatusDot({
   ringColor: string
 }) {
   return (
+    // Sits at the 4–5 o'clock position with its center on the avatar's edge,
+    // so exactly half of the glyph overlaps the pfp and half hangs outside.
+    // Slight negative inset lets the glyph's center land on the circle.
+    // The tooltip anchor lives on an inner wrapper, not this span, since its
+    // `position: relative` would otherwise clobber this span's `absolute`
+    // placement (same specificity, later in the cascade).
     <span
       role="img"
       aria-label={STATUS_LABEL[status]}
-      title={STATUS_LABEL[status]}
-      // Sits at the 4–5 o'clock position with its center on the avatar's edge,
-      // so exactly half of the glyph overlaps the pfp and half hangs outside.
-      // Slight negative inset lets the glyph's center land on the circle.
       className="absolute -bottom-[2.4px] -right-[2.4px] block leading-none"
       style={{ width: size, height: size }}
     >
-      <StatusGlyph status={status} size={size} />
+      <span className="tooltip-anchor block h-full w-full">
+        <span className="tooltip-bubble">{STATUS_LABEL[status]}</span>
+        <StatusGlyph status={status} size={size} />
+      </span>
     </span>
   )
 }
@@ -585,6 +585,51 @@ function SpotifyRow({ spotify, now }: { spotify: LanyardSpotify; now: number }) 
   )
 }
 
+// Resolved app-icon URLs keyed by application_id. Discord's detectable-games
+// icon lookup (see app/api/discord/activity-icon/route.ts) never changes for
+// a given game within a tab's lifetime, so every ActivityRow mount for the
+// same game — including the re-render this component gets every second from
+// PresenceCard's elapsed-time tick — shares one fetch instead of re-hitting
+// the API route. `null` is cached too, so a game with no detectable-apps
+// entry doesn't get re-queried on every render either.
+const gameIconCache = new Map<string, string | null>()
+
+// Mirrors how Discord's own client fills in a game's thumbnail when the
+// activity itself has no per-session rich-presence image (assets.large_image)
+// — e.g. Valorant never sets one — by looking up the game's default icon from
+// Discord's public "detectable applications" list instead of showing a
+// generic glyph.
+function useGameIconFallback(applicationId: string | undefined, enabled: boolean): string | null {
+  const [url, setUrl] = useState<string | null>(
+    () => (applicationId && gameIconCache.get(applicationId)) || null,
+  )
+
+  useEffect(() => {
+    if (!enabled || !applicationId) return
+    const cached = gameIconCache.get(applicationId)
+    if (cached !== undefined) {
+      setUrl(cached)
+      return
+    }
+    let cancelled = false
+    fetch(`/api/discord/activity-icon?app_id=${applicationId}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j: { url?: string } | null) => {
+        const resolved = j?.url ?? null
+        gameIconCache.set(applicationId, resolved)
+        if (!cancelled) setUrl(resolved)
+      })
+      .catch(() => {
+        gameIconCache.set(applicationId, null)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [applicationId, enabled])
+
+  return url
+}
+
 // A single game / stream / watch activity row.
 function ActivityRow({ activity, now }: { activity: LanyardActivity; now: number }) {
   const img = resolveActivityImage(activity)
@@ -593,6 +638,7 @@ function ActivityRow({ activity, now }: { activity: LanyardActivity; now: number
   // Once the user joins an actual place, Discord fills in the game's image
   // and we fall back to the normal thumbnail flow.
   const useRobloxThumb = !img && isRobloxActivity(activity)
+  const fallbackIcon = useGameIconFallback(activity.application_id, !img && !useRobloxThumb)
   const elapsed = activity.timestamps?.start
     ? fmtElapsed(activity.timestamps.start, now)
     : null
@@ -608,6 +654,14 @@ function ActivityRow({ activity, now }: { activity: LanyardActivity; now: number
         />
       ) : useRobloxThumb ? (
         <RobloxLogo className="h-12 w-12 shrink-0" />
+      ) : fallbackIcon ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={fallbackIcon}
+          alt=""
+          referrerPolicy="no-referrer"
+          className="h-12 w-12 shrink-0 rounded-md object-cover"
+        />
       ) : (
         <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-md bg-white/5">
           <Gamepad2 size={20} className="text-fg-muted" />
@@ -685,15 +739,163 @@ function presenceIsRich(p: LanyardData): boolean {
   return false
 }
 
+// Temporary dial-in tool for DECORATION_SCALE/DECORATION_NUDGE above — append
+// `?debugdecoration=1` to the page URL to show a live control panel + enable
+// arrow-key nudging over the decoration image. Tune until it lines up, copy
+// the readout at the bottom of the panel back into the constants above, then
+// this hook/panel can be deleted (it's dead weight for every normal visitor
+// since `enabled` stays false without the query param).
+const DECORATION_DEBUG_STORAGE_KEY = 'zerxbio:decoration-debug'
+
+function useDecorationDebug() {
+  const [enabled, setEnabled] = useState(false)
+  const [scale, setScale] = useState(DECORATION_SCALE)
+  const [nudge, setNudge] = useState(DECORATION_NUDGE)
+
+  useEffect(() => {
+    const isEnabled = new URLSearchParams(window.location.search).has('debugdecoration')
+    setEnabled(isEnabled)
+    if (!isEnabled) return
+    try {
+      const saved = localStorage.getItem(DECORATION_DEBUG_STORAGE_KEY)
+      if (saved) {
+        const parsed = JSON.parse(saved) as { scale: number; nudge: { x: number; y: number } }
+        setScale(parsed.scale)
+        setNudge(parsed.nudge)
+      }
+    } catch {
+      /* corrupt/missing storage, fall back to defaults */
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!enabled) return
+    localStorage.setItem(DECORATION_DEBUG_STORAGE_KEY, JSON.stringify({ scale, nudge }))
+  }, [enabled, scale, nudge])
+
+  useEffect(() => {
+    if (!enabled) return
+    const onKey = (e: KeyboardEvent) => {
+      // Don't hijack arrow keys while the user is editing a number input —
+      // those already use arrows to step the field natively.
+      const tag = (e.target as HTMLElement | null)?.tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return
+      const step = e.shiftKey ? 5 : 1
+      if (e.key === 'ArrowLeft') setNudge((n) => ({ ...n, x: n.x - step }))
+      else if (e.key === 'ArrowRight') setNudge((n) => ({ ...n, x: n.x + step }))
+      else if (e.key === 'ArrowUp') setNudge((n) => ({ ...n, y: n.y - step }))
+      else if (e.key === 'ArrowDown') setNudge((n) => ({ ...n, y: n.y + step }))
+      else return
+      e.preventDefault()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [enabled])
+
+  return { enabled, scale, setScale, nudge, setNudge }
+}
+
+// Floating control panel rendered only when the positioner is enabled.
+// Deliberately plain inputs/buttons (no new deps) since this never ships to
+// real visitors.
+function DecorationDebugPanel({
+  scale,
+  setScale,
+  nudge,
+  setNudge,
+}: {
+  scale: number
+  setScale: (v: number) => void
+  nudge: { x: number; y: number }
+  setNudge: (v: { x: number; y: number }) => void
+}) {
+  const code = `const DECORATION_SCALE = ${scale.toFixed(3)}\nconst DECORATION_NUDGE = { x: ${nudge.x}, y: ${nudge.y} }`
+  // Portaled to document.body — this renders inside Modal's panel, whose
+  // `.modal-panel-enter`/`-exit` CSS animation leaves a lingering non-`none`
+  // `transform` on the panel (fill-mode `both` holds it after the animation
+  // finishes), which creates a new containing block for any `position:fixed`
+  // descendant. Without the portal this panel would be pinned to the modal
+  // card's corner instead of the actual viewport corner.
+  return createPortal(
+    <div className="fixed bottom-4 right-4 z-[200] w-64 space-y-2 rounded-xl border border-line bg-bg-card p-3 text-xs text-fg shadow-2xl">
+      <div className="font-semibold">Decoration debug</div>
+      <label className="flex items-center justify-between gap-2">
+        Scale
+        <input
+          type="number"
+          step={0.005}
+          value={scale}
+          onChange={(e) => setScale(parseFloat(e.target.value) || 0)}
+          className="w-20 rounded-md border border-line bg-bg px-1.5 py-0.5 text-right"
+        />
+      </label>
+      <label className="flex items-center justify-between gap-2">
+        Nudge X
+        <input
+          type="number"
+          step={1}
+          value={nudge.x}
+          onChange={(e) => setNudge({ ...nudge, x: parseFloat(e.target.value) || 0 })}
+          className="w-20 rounded-md border border-line bg-bg px-1.5 py-0.5 text-right"
+        />
+      </label>
+      <label className="flex items-center justify-between gap-2">
+        Nudge Y
+        <input
+          type="number"
+          step={1}
+          value={nudge.y}
+          onChange={(e) => setNudge({ ...nudge, y: parseFloat(e.target.value) || 0 })}
+          className="w-20 rounded-md border border-line bg-bg px-1.5 py-0.5 text-right"
+        />
+      </label>
+      <button
+        type="button"
+        onClick={() => {
+          setScale(DECORATION_SCALE)
+          setNudge(DECORATION_NUDGE)
+        }}
+        className="w-full rounded-md bg-bg-raised px-2 py-1 text-center hover:bg-bg-subtle"
+      >
+        Reset to current constants
+      </button>
+      <div className="text-fg-muted">Arrow keys nudge · hold Shift for 5px steps</div>
+      <pre className="whitespace-pre-wrap break-all rounded-md bg-bg px-2 py-1.5 text-[10px] text-fg-muted">
+        {code}
+      </pre>
+    </div>,
+    document.body,
+  )
+}
+
 export default function DiscordProfile({ userId }: { userId: string }) {
-  const [user, setUser] = useState<DiscordUser | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const fetcher = useCallback(async () => {
+    const r = await fetch(`/api/discord?id=${userId}`)
+    const j = (await r.json()) as ApiResponse
+    if (!r.ok || !j.data) throw new Error(j.message || 'Failed to load profile')
+    return j.data
+  }, [userId])
+
+  // Hydrates instantly from sessionStorage on reopen (matching
+  // Roblox/TikTok/Wallet's modals) instead of guaranteeing a loading
+  // spinner flash every time this modal is reopened within the same
+  // session — the route already sets revalidate=300 + a public
+  // s-maxage Cache-Control, so POLL_MS here just mirrors that server-side
+  // freshness window rather than forcing a tighter one client-side.
+  const { data: user, error } = useCachedPoll<DiscordUser>({
+    cacheKey: `zerxbio:discord:profile:${userId}`,
+    pollMs: POLL_MS,
+    resetKey: userId,
+    fetcher,
+  })
+
   const [copied, setCopied] = useState(false)
   const [avatarBroken, setAvatarBroken] = useState(false)
   const [expanded, setExpanded] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
   const [idCopied, setIdCopied] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
+  const decorationDebug = useDecorationDebug()
   // Only start polling Lanyard once the modal is expanded — no point burning
   // a request every 15s for a card the user hasn't looked at yet.
   const presence = useLanyard(expanded ? userId : '')
@@ -703,33 +905,14 @@ export default function DiscordProfile({ userId }: { userId: string }) {
   // treats it in the profile popup, and keeps it visible alongside a game.
   const customStatus =
     presenceData?.activities?.find((a) => a.type === 4 && (a.state || a.emoji)) ?? null
-  const shouldReduceMotion = useReducedMotion()
 
+  // `user`/`error` now come from useCachedPoll above — this just resets the
+  // per-profile local UI state (avatar-broken flag, expanded card) when the
+  // viewed user changes, same trigger (`userId`) the cached poll itself
+  // resets on.
   useEffect(() => {
-    let alive = true
-    setUser(null)
-    setError(null)
     setAvatarBroken(false)
     setExpanded(false)
-    // Let the browser / Next Data Cache decide freshness — the route already
-    // sets revalidate=300 + a public s-maxage Cache-Control, so this defers
-    // to that 5-min server-side window instead of forcing a fresh Discord
-    // API round-trip on every modal open.
-    fetch(`/api/discord?id=${userId}`)
-      .then(async (r) => {
-        const j = (await r.json()) as ApiResponse
-        if (!r.ok || !j.data) throw new Error(j.message || 'Failed to load profile')
-        return j.data
-      })
-      .then((d) => {
-        if (alive) setUser(d)
-      })
-      .catch((e: Error) => {
-        if (alive) setError(e.message)
-      })
-    return () => {
-      alive = false
-    }
   }, [userId])
 
   const copyUsername = async () => {
@@ -807,17 +990,18 @@ export default function DiscordProfile({ userId }: { userId: string }) {
 
   return (
     <div className="space-y-3">
+      {/* Collapsed/expanded swap — plain CSS entrance via `.profile-card-enter`
+          (see globals.css) instead of framer-motion's AnimatePresence. This
+          toggle only ever runs collapsed→expanded once per modal session, so
+          no exit animation is needed: the collapsed card is simply unmounted
+          the instant `expanded` flips, and the expanded card fades/slides in
+          on its own entrance. */}
       {!expanded ? (
-          <m.button
-            key="collapsed"
+          <button
             type="button"
             onClick={() => setExpanded(true)}
             aria-expanded={false}
             aria-label="Show full profile"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.2 }}
             className="relative block h-24 w-full overflow-hidden rounded-xl text-left"
             style={{ backgroundColor: bannerBg }}
           >
@@ -863,6 +1047,8 @@ export default function DiscordProfile({ userId }: { userId: string }) {
                 initial={initial}
                 initialBg={initialBg}
                 decorationUrl={decorationUrl}
+                decorationScale={decorationDebug.scale}
+                decorationNudge={decorationDebug.nudge}
                 priority
               />
               <div className="min-w-0 flex-1">
@@ -874,16 +1060,9 @@ export default function DiscordProfile({ userId }: { userId: string }) {
                 </div>
               </div>
             </div>
-          </m.button>
+          </button>
         ) : (
-          <m.div
-            key="expanded"
-            initial={shouldReduceMotion ? { opacity: 0 } : { opacity: 0, y: -4 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={shouldReduceMotion ? { opacity: 0 } : { opacity: 0, y: -4 }}
-            transition={{ duration: 0.25 }}
-            className="space-y-3"
-          >
+          <div className="profile-card-enter space-y-3">
             {/* Banner + avatar header — the whole card uses the profile
                 accent/banner color so it mimics Discord's theme-tinted popup.
                 Overflow-hidden lives on the banner sub-div only so the options
@@ -924,6 +1103,8 @@ export default function DiscordProfile({ userId }: { userId: string }) {
                     initial={initial}
                     initialBg={initialBg}
                     decorationUrl={decorationUrl}
+                    decorationScale={decorationDebug.scale}
+                    decorationNudge={decorationDebug.nudge}
                     noBorder
                     priority
                   />
@@ -964,15 +1145,16 @@ export default function DiscordProfile({ userId }: { userId: string }) {
                     {user.badges && user.badges.length > 0 && (
                       <span className="flex shrink-0 items-center gap-1">
                         {user.badges.map((b) => (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img
-                            key={b.name}
-                            src={b.icon_url}
-                            alt={b.description}
-                            title={b.description}
-                            referrerPolicy="no-referrer"
-                            className="h-5 w-5 drop-shadow-[0_1px_2px_rgba(0,0,0,0.5)]"
-                          />
+                          <span key={b.name} className="tooltip-anchor inline-flex">
+                            <span className="tooltip-bubble">{b.description}</span>
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img
+                              src={b.icon_url}
+                              alt={b.description}
+                              referrerPolicy="no-referrer"
+                              className="h-5 w-5 drop-shadow-[0_1px_2px_rgba(0,0,0,0.5)]"
+                            />
+                          </span>
                         ))}
                       </span>
                     )}
@@ -1052,7 +1234,15 @@ export default function DiscordProfile({ userId }: { userId: string }) {
                 On Discord since {new Date(user.creation_date.replace(' ', 'T')).getFullYear()}
               </div>
             )}
-          </m.div>
+          </div>
+      )}
+      {decorationDebug.enabled && (
+        <DecorationDebugPanel
+          scale={decorationDebug.scale}
+          setScale={decorationDebug.setScale}
+          nudge={decorationDebug.nudge}
+          setNudge={decorationDebug.setNudge}
+        />
       )}
     </div>
   )

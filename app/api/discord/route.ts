@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { badgeIconUrl, fetchDstnProfile } from '@/lib/discord'
 
 // Edge runtime: cold start ~50 ms vs ~500 ms on Node.js Lambda. This route
 // only uses fetch + JSON + BigInt, all of which are edge-compatible. The
@@ -115,8 +116,9 @@ function primaryGuildWithUrl(g: PrimaryGuild | undefined | null) {
 const NITRO_LABELS: Record<number, string> = { 1: 'Nitro Classic', 2: 'Nitro', 3: 'Nitro Basic' }
 
 // Discord doesn't expose Nitro in public_flags, but any premium_type > 0 means
-// the user is on a Nitro plan and should get the diamond badge.
-const NITRO_BADGE = {
+// the user is on a Nitro plan and should get a badge. Used only as a fallback
+// when dstn (see below) doesn't have the real tenure badge for this user.
+const DEFAULT_NITRO_BADGE = {
   name: 'PREMIUM',
   description: 'Discord Nitro',
   icon_url: 'https://cdn.discordapp.com/badge-icons/2ba85e8026a8614b640c2837bcdfe21b.png',
@@ -146,16 +148,20 @@ export async function GET(request: Request) {
   }
 
   try {
-    const upstream = await fetch(
-      `https://discord.com/api/v10/users/${encodeURIComponent(id)}`,
-      {
+    // dstn mirrors Discord's private profile endpoint, which is the only
+    // place the real Nitro tenure badge (e.g. "6 months: Gold") lives — the
+    // bot-token REST call below can't see it, so it's fetched in parallel
+    // and used to replace the generic fallback badge further down.
+    const [upstream, dstn] = await Promise.all([
+      fetch(`https://discord.com/api/v10/users/${encodeURIComponent(id)}`, {
         headers: { Authorization: `Bot ${token}`, Accept: 'application/json' },
         next: { revalidate: 300 },
         // Bound the wait so a slow Discord doesn't burn the whole 60 s
         // serverless budget and leave the client staring at a spinner.
         signal: AbortSignal.timeout(8000),
-      },
-    )
+      }),
+      fetchDstnProfile(id),
+    ])
 
     if (!upstream.ok) {
       const body = await upstream.json().catch(() => null)
@@ -197,7 +203,11 @@ export async function GET(request: Request) {
       !!u.avatar?.startsWith('a_') ||
       !!u.banner ||
       !!u.avatar_decoration_data?.asset
-    const badges = hasNitro ? [...flagBadges, NITRO_BADGE] : flagBadges
+    const tenureBadge = dstn?.badges.find((b) => b.id.startsWith('premium_tenure'))
+    const nitroBadge = tenureBadge
+      ? { name: 'PREMIUM', description: tenureBadge.description, icon_url: badgeIconUrl(tenureBadge.icon) }
+      : DEFAULT_NITRO_BADGE
+    const badges = hasNitro ? [...flagBadges, nitroBadge] : flagBadges
 
     const data = {
       id: u.id,

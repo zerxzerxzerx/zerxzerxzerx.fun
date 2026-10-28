@@ -1,4 +1,7 @@
 import { NextResponse } from 'next/server'
+import { ZERX } from '@/lib/constants'
+import { getRecordedHistory, mergeHistory, recordSnapshot, type ValuePoint } from '@/lib/rolimonsHistory'
+import { tryFetch } from '@/lib/robloxFetch'
 
 // Node runtime — Roblox's Cloudflare WAF (both directly and in front of
 // roproxy.com) fingerprints TLS ClientHellos and 403s the edge runtime's
@@ -41,71 +44,19 @@ const R = {
   games: 'https://games.roblox.com',
   // apis.roblox.com covers the universes/place-id lookup endpoint.
   universes: 'https://apis.roblox.com',
+  // Official collectibles (limiteds) listing — public for any user whose
+  // inventory privacy allows it. Same data Roblox's own profile page uses
+  // to render the "Limiteds" inventory tab shown in the HTML the owner
+  // pasted in (mix_item cards with RAP/serial).
+  inventory: 'https://inventory.roblox.com',
 } as const
 
-// Every upstream is bounded to 6 s so one slow microservice can't hold up
-// the whole response. Combined with `tryFetch`'s null-on-error semantics,
-// this means we can use plain `Promise.all` (see fan-out below) — every
-// slot resolves, so one timing-out endpoint just leaves its slot as null
-// rather than blowing up the modal.
-const UPSTREAM_TIMEOUT_MS = 6000
-
-async function safeJson<T = unknown>(res: Response): Promise<T | null> {
-  try {
-    return (await res.json()) as T
-  } catch {
-    return null
-  }
-}
-
-
-// Wraps a fetch so a network hiccup, non-OK response, or JSON parse error
-// resolves to `null` instead of throwing. Individual data slots on the
-// client render "—" when their field is null, so a partial API still
-// produces a usable modal.
-async function tryFetch<T = unknown>(url: string, init?: RequestInit): Promise<T | null> {
-  try {
-    const res = await fetch(url, {
-      ...init,
-      // NOTE: we deliberately do NOT pass `next: { revalidate: N }` here.
-      // Next.js's fetch cache rewrites the outgoing request in a way that
-      // Roblox's WAF flags as bot-like (specifically the missing/altered
-      // sec-fetch-* headers plus an internal Next cache key header), which
-      // gets us a hard 403 from the edge. Instead we rely on the outer
-      // route's Cache-Control header (public, s-maxage=300) so the Vercel
-      // CDN caches the final response — same net effect, no upstream WAF
-      // trip.
-      cache: 'no-store',
-      signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
-      headers: {
-        Accept: 'application/json',
-        // Spoof a plausible Chrome UA — roproxy's Cloudflare rule set
-        // routes obvious bot UAs (node/undici/python) through an
-        // interactive challenge, which we can't complete server-side.
-        'User-Agent':
-          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-        ...(init?.headers || {}),
-      },
-    })
-    if (!res.ok) {
-      // Log the upstream failure in dev so misfires are visible in the
-      // terminal instead of collapsing silently to null. The compiler
-      // strips console.warn in production builds.
-      if (process.env.NODE_ENV !== 'production') {
-        // eslint-disable-next-line no-console
-        console.warn('[roblox] upstream not-ok', url, res.status)
-      }
-      return null
-    }
-    return await safeJson<T>(res)
-  } catch (e) {
-    if (process.env.NODE_ENV !== 'production') {
-      // eslint-disable-next-line no-console
-      console.warn('[roblox] upstream threw', url, (e as Error).message)
-    }
-    return null
-  }
-}
+// `tryFetch` (shared with app/api/roblox/item/route.ts) is bounded to 6s
+// per call and resolves to `null` on any failure instead of throwing — see
+// lib/robloxFetch.ts for the full WAF-bypass rationale. That null-on-error
+// semantics is what makes the plain `Promise.all` below safe: every slot
+// resolves, so one timing-out endpoint just leaves its slot null rather
+// than blowing up the modal.
 
 // --- Response shapes from Roblox (typed loosely — only fields we consume) ---
 type RbxUsernameLookup = {
@@ -171,6 +122,7 @@ type RolimonsData = {
   rap: number | null
   rank: number | null
   badges: RolimonsBadge[]
+  history: ValuePoint[]
 }
 // The API returns `rolibadges` as an object whose keys are stable badge
 // slugs. The presence of a key means the player earned it — the value is
@@ -209,8 +161,21 @@ function rolimonsFromApi(api: RolimonsPlayerApi): RolimonsData {
     rap: api.rap ?? null,
     rank: api.rank ?? null,
     badges,
+    history: [],
   }
 }
+// inventory.roblox.com's collectibles endpoint — the official source for
+// a user's owned limiteds (Roblox's own profile "Limiteds" tab reads from
+// this same data). `recentAveragePrice` is RAP; Rolimons' RAP figure is
+// sourced from this exact field across all players.
+type RbxCollectible = {
+  userAssetId?: number
+  serialNumber?: number | null
+  assetId?: number
+  name?: string
+  recentAveragePrice?: number | null
+}
+type RbxCollectiblesResponse = { data?: RbxCollectible[] }
 type RbxUniverseDetails = {
   data?: {
     id: number
@@ -239,37 +204,60 @@ function presenceLabel(t: number | undefined): 'Offline' | 'Online' | 'In-Game' 
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url)
+  const idParam = searchParams.get('id')?.trim()
   const username = searchParams.get('username')?.trim()
 
-  if (!username || !/^[a-zA-Z0-9_]{3,20}$/.test(username)) {
+  // Accept either a numeric Roblox user id (skips the lookup round-trip
+  // entirely — used by the bio page, which already knows its own id) or a
+  // username (resolved via the lookup below — used for arbitrary profiles).
+  let userId: number
+  let fallbackName: string | null = null
+  let fallbackDisplayName: string | null = null
+
+  if (idParam) {
+    if (!/^\d{1,20}$/.test(idParam)) {
+      return NextResponse.json(
+        { error: 'invalid_id', message: 'A valid Roblox user id is required.' },
+        { status: 400 },
+      )
+    }
+    userId = Number(idParam)
+  } else if (username) {
+    if (!/^[a-zA-Z0-9_]{3,20}$/.test(username)) {
+      return NextResponse.json(
+        { error: 'invalid_username', message: 'A valid Roblox username is required.' },
+        { status: 400 },
+      )
+    }
+
+    // Resolve username → userId. `POST /v1/usernames/users` is the
+    // canonical exact-match lookup. We previously used
+    // `GET /v1/users/search?keyword=…` to work around a Roblox WAF rule on
+    // POSTs from server-side fetches, but that search endpoint started
+    // returning `{errors:[{code:0}]}` in early 2026 (Roblox
+    // anonymous-degraded it). The POST endpoint responds fine with our
+    // Chrome UA — same origin as everything else.
+    const lookup = await tryFetch<RbxUsernameLookup>(`${R.users}/v1/usernames/users`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ usernames: [username], excludeBannedUsers: false }),
+    })
+    const hit = lookup?.data?.[0]
+    if (!hit || typeof hit.id !== 'number') {
+      return NextResponse.json(
+        { error: 'not_found', message: `Roblox user "${username}" not found.` },
+        { status: 404 },
+      )
+    }
+    userId = hit.id
+    fallbackName = hit.name
+    fallbackDisplayName = hit.displayName
+  } else {
     return NextResponse.json(
-      { error: 'invalid_username', message: 'A valid Roblox username is required.' },
+      { error: 'invalid_request', message: 'A Roblox user id or username is required.' },
       { status: 400 },
     )
   }
-
-  // 1. Resolve username → userId. Everything else needs the id, so this is
-  //    the only serialized step.
-  //
-  //    `POST /v1/usernames/users` is the canonical exact-match lookup.
-  //    We previously used `GET /v1/users/search?keyword=…` to work around
-  //    a Roblox WAF rule on POSTs from server-side fetches, but that
-  //    search endpoint started returning `{errors:[{code:0}]}` in early
-  //    2026 (Roblox anonymous-degraded it). The POST endpoint responds
-  //    fine with our Chrome UA — same origin as everything else.
-  const lookup = await tryFetch<RbxUsernameLookup>(`${R.users}/v1/usernames/users`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ usernames: [username], excludeBannedUsers: false }),
-  })
-  const hit = lookup?.data?.[0]
-  if (!hit || typeof hit.id !== 'number') {
-    return NextResponse.json(
-      { error: 'not_found', message: `Roblox user "${username}" not found.` },
-      { status: 404 },
-    )
-  }
-  const userId = hit.id
 
   // 2. Everything else fans out in parallel. `Promise.all` (not allSettled)
   //    is safe here because each `tryFetch` swallows its own errors and
@@ -286,6 +274,7 @@ export async function GET(request: Request) {
     headshotRes,
     fullbodyRes,
     rolimonsApi,
+    collectiblesRes,
   ] = await Promise.all([
     tryFetch<RbxUser>(`${R.users}/v1/users/${userId}`),
     tryFetch<RbxPresence>(`${R.presence}/v1/presence/users`, {
@@ -312,8 +301,25 @@ export async function GET(request: Request) {
     // badge SVGs) but Cloudflare fingerprints server-side callers and
     // 403s it, so the JSON API is the only viable path.
     tryFetch<RolimonsPlayerApi>(`https://api.rolimons.com/players/v1/playerinfo/${userId}`),
+    // Owned limiteds, sorted by Roblox's own API in acquisition order —
+    // we re-sort by RAP below so the priciest pieces lead the grid.
+    tryFetch<RbxCollectiblesResponse>(
+      `${R.inventory}/v1/users/${userId}/assets/collectibles?limit=100&sortOrder=Desc`,
+    ),
   ])
   const rolimons: RolimonsData | null = rolimonsApi ? rolimonsFromApi(rolimonsApi) : null
+
+  // The value-history chart (seed-digitized past + recorded-going-forward
+  // present) only makes sense for the site owner's own profile — looking up
+  // an arbitrary Roblox user's Rolimons page has no reference chart to seed
+  // from, so we don't record or attach history for anyone else.
+  if (rolimons && userId === Number(ZERX.robloxId)) {
+    const [recorded] = await Promise.all([
+      getRecordedHistory(userId),
+      recordSnapshot(userId, rolimons.value, rolimons.rap),
+    ])
+    rolimons.history = mergeHistory(recorded)
+  }
 
   // 3. If the user is in a game, follow the placeId → universeId → game
   //    details chain so the modal can render a link + player count. Fire
@@ -372,6 +378,24 @@ export async function GET(request: Request) {
     }
   }
 
+  // 4b. Limiteds — sort by RAP descending (the API's own sort order is
+  //     acquisition-based, not value-based) and cap to 30 so the thumbnail
+  //     batch call and the grid stay a reasonable size.
+  const limitedsTop = (collectiblesRes?.data || [])
+    .slice()
+    .sort((a, b) => (b.recentAveragePrice ?? 0) - (a.recentAveragePrice ?? 0))
+    .slice(0, 30)
+  const limitedIconsMap = new Map<number, string>()
+  if (limitedsTop.length) {
+    const assetIds = limitedsTop.map((c) => c.assetId).filter((id): id is number => !!id)
+    const limitedIcons = await tryFetch<RbxThumb>(
+      `${R.thumbnails}/v1/assets?assetIds=${assetIds.join(',')}&size=150x150&format=Png&isCircular=false`,
+    )
+    for (const t of limitedIcons?.data || []) {
+      if (t.imageUrl) limitedIconsMap.set(t.targetId, t.imageUrl)
+    }
+  }
+
   // 5. Classic Roblox Badges (Veteran, Bricksmith, Homestead, Warrior, etc.)
   //    are returned as a flat array with `imageUrl` already baked in —
   //    unlike `/v1/badges/{id}/icon` which needs a second thumbnail batch
@@ -383,8 +407,8 @@ export async function GET(request: Request) {
 
   const data = {
     id: userId,
-    username: profile?.name || hit.name,
-    displayName: profile?.displayName || hit.displayName,
+    username: profile?.name || fallbackName || String(userId),
+    displayName: profile?.displayName || fallbackDisplayName || profile?.name || String(userId),
     description: profile?.description ?? '',
     created: profile?.created ?? null,
     isBanned: !!profile?.isBanned,
@@ -422,6 +446,15 @@ export async function GET(request: Request) {
       headshot: headshotUrl,
       fullbody: fullbodyUrl,
     },
+    limiteds: limitedsTop.map((c) => ({
+      id: c.userAssetId ?? c.assetId ?? 0,
+      assetId: c.assetId ?? 0,
+      name: c.name || 'Unknown Item',
+      rap: c.recentAveragePrice ?? null,
+      serial: c.serialNumber ?? null,
+      icon_url: (c.assetId && limitedIconsMap.get(c.assetId)) || null,
+      url: `https://www.roblox.com/catalog/${c.assetId}`,
+    })),
     rolimons,
     fetchedAt: new Date().toISOString(),
   }
