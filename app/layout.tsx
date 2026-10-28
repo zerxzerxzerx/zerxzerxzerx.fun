@@ -1,9 +1,10 @@
 import type { Metadata, Viewport } from 'next'
 import { spaceGrotesk, inter, jetbrainsMono } from '@/lib/fonts'
+import { SITE_URL } from '@/lib/site'
 import './globals.css'
 
 export const metadata: Metadata = {
-  metadataBase: new URL('https://zerx.dev'),
+  metadataBase: new URL(SITE_URL),
   title: {
     default: 'zerx',
     template: '%s · zerx',
@@ -15,7 +16,7 @@ export const metadata: Metadata = {
   openGraph: {
     title: 'zerx',
     description: 'zerx — socials and live Discord status.',
-    url: 'https://zerx.dev',
+    url: SITE_URL,
     siteName: 'zerx',
     type: 'website',
     locale: 'en_US',

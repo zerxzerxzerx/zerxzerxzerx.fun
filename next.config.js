@@ -48,6 +48,16 @@ const nextConfig = {
   // safety net to fix a dev-only rendering bug.
   reactStrictMode: false,
   poweredByHeader: false,
+  // This site never uses next/image (every image is a plain <img> — see the
+  // eslint-disable comments throughout components/). Next still mounts the
+  // /_next/image optimizer route by default regardless of whether the app
+  // calls it, and that route has been the target of several critical
+  // AVIF/SVG-processing RCE advisories upstream. `unoptimized: true` turns
+  // the endpoint into an inert passthrough instead of running it through
+  // sharp, closing that attack surface for a feature this app never uses.
+  images: {
+    unoptimized: true,
+  },
   compiler: {
     removeConsole: process.env.NODE_ENV === 'production' ? { exclude: ['error'] } : false,
   },
