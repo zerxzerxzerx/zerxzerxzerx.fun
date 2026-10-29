@@ -6,6 +6,7 @@ import { useReducedMotion } from 'framer-motion'
 import { Check, Copy, Gamepad2, Loader2, MoreHorizontal } from 'lucide-react'
 import { useCachedPoll } from '@/lib/useCachedPoll'
 import { subscribeLanyard } from '@/lib/lanyard'
+import { Icon } from '@/lib/icons'
 
 type DiscordUser = {
   id: string
@@ -433,34 +434,12 @@ function resolveActivityImage(activity: LanyardActivity): string | null {
 // even if the display name has been localized or renamed.
 const ROBLOX_APP_ID = '363445589247131654'
 
-// Inline SVG of the Roblox squircle logo (tilted rounded square with a small
-// centered notch). The notch is a real cutout via fill-rule="evenodd" so
-// whatever sits behind the logo shows through — no white infill.
+// Real Roblox brand mark (same @icons-pack/react-simple-icons source as the
+// top-level social icon row in BioLink.tsx — see lib/icons.tsx) rather than
+// a hand-drawn approximation, so this actually reads as the Roblox logo
+// instead of an abstract squircle-with-a-hole shape.
 function RobloxLogo({ className }: { className?: string }) {
-  return (
-    <svg
-      viewBox="0 0 32 32"
-      xmlns="http://www.w3.org/2000/svg"
-      fill="none"
-      aria-hidden="true"
-      focusable="false"
-      className={className}
-    >
-      <defs>
-        <linearGradient id="rblx-grad" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0" stopColor="#B7C6D4" />
-          <stop offset="1" stopColor="#8FA5B7" />
-        </linearGradient>
-      </defs>
-      <path
-        transform="rotate(15 16 16)"
-        fillRule="evenodd"
-        clipRule="evenodd"
-        d="M4 4H28V28H4ZM13 13V19H19V13H13Z"
-        fill="url(#rblx-grad)"
-      />
-    </svg>
-  )
+  return <Icon name="roblox" size={48} className={`text-fg ${className ?? ''}`} />
 }
 
 // Case-insensitive because Discord's activity feed reports the display name
