@@ -287,23 +287,17 @@ a {
   to   { width: 0%; }
 }
 
-/* Suppress sticky :hover on touch devices. Mobile Safari (and Android Chrome
+/* Sticky :hover on touch devices used to be "handled" here, but the media
+   condition was inverted — this block was wrapped in `@media (hover: none)`
+   (touch-only devices) and *added* a hover background there, the opposite of
+   the suppression the old comment claimed. Mobile Safari (and Android Chrome
    to a lesser extent) latches :hover on tap and only clears it when the user
-   taps elsewhere — so every tile the user has ever tapped shows in its
-   "hovered" (bg-bg-subtle) state for the rest of the session. That reads as
-   the tiles randomly changing color / "appearing and disappearing" when
-   users interact.
-
-   Rather than rewrite every `hover:*` utility across the tree, we scope the
-   hover backgrounds to `@media (hover: hover)` — devices with a true
-   hovering pointer (mouse/trackpad). Touch primary devices get no hover
-   state, which is the correct behavior. */
-@media (hover: none) {
-  .bio-enter a:hover,
-  .bio-enter button:hover {
-    background-color: var(--bg-tertiary);
-  }
-}
+   taps elsewhere, so this was actively causing tapped buttons/links to show a
+   stuck highlight — read as "clicking things flickers" on iOS/iPadOS.
+   Removed; every `hover:*` Tailwind utility across the app is now scoped to
+   `@media (hover: hover)` globally via the custom variant in
+   tailwind.config.ts, which is the correct, non-inverted version of what this
+   block was trying to do. */
 
 /* Universal custom tooltip — one hover-bubble implementation shared by every
    hint in the app (stats row labels, badge names/descriptions, limited item
