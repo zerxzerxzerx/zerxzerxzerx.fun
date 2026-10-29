@@ -23,10 +23,14 @@ const securityHeaders = [
         : "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
       "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
       "font-src 'self' https://fonts.gstatic.com data:",
-      // cdn.discordapp.com = profile avatar / badge art; i.scdn.co = Spotify
-      // album art; *.rbxcdn.com = Roblox headshot/badge/group thumbnails;
-      // tiktokcdn(-us/-eu) = TikTok avatar images in the TikTok modal.
-      "img-src 'self' data: blob: https://cdn.discordapp.com https://i.scdn.co https://*.rbxcdn.com https://*.tiktokcdn.com https://*.tiktokcdn-us.com https://*.tiktokcdn-eu.com",
+      // cdn.discordapp.com = profile avatar / badge art; media.discordapp.net =
+      // Discord's media proxy for *external* Rich Presence activity images
+      // (resolveActivityImage()'s `mp:external/...` case in DiscordProfile.tsx —
+      // this is how most non-Discord-native games/apps, e.g. Roblox, serve
+      // their activity thumbnail); i.scdn.co = Spotify album art;
+      // *.rbxcdn.com = Roblox headshot/badge/group thumbnails; tiktokcdn(-us/-eu)
+      // = TikTok avatar images in the TikTok modal.
+      "img-src 'self' data: blob: https://cdn.discordapp.com https://media.discordapp.net https://i.scdn.co https://*.rbxcdn.com https://*.tiktokcdn.com https://*.tiktokcdn-us.com https://*.tiktokcdn-eu.com",
       "media-src 'self' https://cdn.discordapp.com",
       // api.lanyard.rest = client-side Discord presence polling.
       // dcdn.dstn.to = avatar decoration / nameplate / badge data that
