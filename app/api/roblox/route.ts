@@ -335,6 +335,7 @@ export async function GET(request: Request) {
         playing: number | null
         visits: number | null
         url: string
+        iconUrl: string | null
       }
     | null = null
   if (placeId && (pres?.userPresenceType === 2 || pres?.userPresenceType === 3)) {
@@ -343,9 +344,15 @@ export async function GET(request: Request) {
     )
     const universeId = universeLookup?.universeId ?? null
     if (universeId) {
-      const details = await tryFetch<RbxUniverseDetails>(
-        `${R.games}/v1/games?universeIds=${universeId}`,
-      )
+      // Fetch the game's icon in parallel with its details — same batched
+      // thumbnail endpoint used for groups/limiteds below, just scoped to
+      // a single universeId since there's only ever one "current game".
+      const [details, gameIcon] = await Promise.all([
+        tryFetch<RbxUniverseDetails>(`${R.games}/v1/games?universeIds=${universeId}`),
+        tryFetch<RbxThumb>(
+          `${R.thumbnails}/v1/games/icons?universeIds=${universeId}&size=150x150&format=Png&isCircular=false`,
+        ),
+      ])
       const first = details?.data?.[0]
       if (first) {
         currentGame = {
@@ -356,6 +363,7 @@ export async function GET(request: Request) {
           playing: first.playing ?? null,
           visits: first.visits ?? null,
           url: `https://www.roblox.com/games/${placeId}`,
+          iconUrl: gameIcon?.data?.[0]?.imageUrl || null,
         }
       }
     }

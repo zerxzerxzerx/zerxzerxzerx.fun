@@ -58,6 +58,7 @@ type RobloxData = {
     playing: number | null
     visits: number | null
     url: string
+    iconUrl: string | null
   } | null
   thumbnails: {
     headshot: string | null
@@ -349,8 +350,10 @@ function StatsRow({
 // Currently-playing card — mirrors the Discord Spotify-row layout with a
 // large thumbnail on the left and details on the right, since it reads as
 // a "now doing X" card and users are already primed for that pattern by
-// the Discord modal. The pulsing dot reuses the same live-indicator
-// language as PresencePill instead of a static label.
+// the Discord modal. The real game icon comes from Roblox's thumbnails API
+// (fetched server-side in app/api/roblox/route.ts); the pulsing dot moves
+// to a small corner badge on the icon when one is available, and remains
+// the full placeholder box on the rare occasion the icon fetch fails.
 function CurrentGameCard({ game }: { game: NonNullable<RobloxData['currentGame']> }) {
   return (
     <a
@@ -359,12 +362,28 @@ function CurrentGameCard({ game }: { game: NonNullable<RobloxData['currentGame']
       rel="noopener noreferrer"
       className="group flex items-center gap-3 rounded-xl bg-bg-raised p-3 transition-colors hover:bg-bg-subtle"
     >
-      <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-md bg-[#2196F3]/15 text-[#2196F3] ring-1 ring-[#2196F3]/30">
-        <span className="relative flex h-2.5 w-2.5">
-          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#2196F3] opacity-60" />
-          <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-[#2196F3]" />
-        </span>
-      </div>
+      {game.iconUrl ? (
+        <div className="relative h-12 w-12 shrink-0">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={game.iconUrl}
+            alt=""
+            referrerPolicy="no-referrer"
+            className="h-12 w-12 rounded-md object-cover"
+          />
+          <span className="absolute -bottom-0.5 -right-0.5 flex h-3 w-3">
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#2196F3] opacity-60" />
+            <span className="relative inline-flex h-3 w-3 rounded-full bg-[#2196F3] ring-2 ring-bg-raised" />
+          </span>
+        </div>
+      ) : (
+        <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-md bg-[#2196F3]/15 text-[#2196F3] ring-1 ring-[#2196F3]/30">
+          <span className="relative flex h-2.5 w-2.5">
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#2196F3] opacity-60" />
+            <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-[#2196F3]" />
+          </span>
+        </div>
+      )}
       <div className="min-w-0 flex-1">
         <div className="text-[10px] font-semibold uppercase tracking-wider text-[#2196F3]">
           Now Playing
